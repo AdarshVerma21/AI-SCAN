@@ -1,0 +1,11 @@
+device: auto
+safe:
+  repo: ${SAFE_REPO}
+  checkpoint: ${SAFE_CHECKPOINT}
+probe_dinov2:
+  repo: ${PROBE_REPO}
+  checkpoint: ${PROBE_CHECKPOINT}
+  backbone: ${PROBE_DINOV2_BACKBONE}
+fusion:
+  artifact: artifacts/fusion.json
+  threshold_metric: balanced_accuracy

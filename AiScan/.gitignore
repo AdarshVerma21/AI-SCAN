@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.pytest_cache/
+checkpoints/
+external/
+data/
+artifacts/*.json
+artifacts/*.csv
+frontend/node_modules/
+frontend/dist/
+*.pth
+*.pt
+*.safetensors
