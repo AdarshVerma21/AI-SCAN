@@ -7,10 +7,17 @@ from typing import Callable
 
 import torch
 
+from ..fusion.logistic_fusion import LogisticFusion
 from ..inference.predictor import Predictor, Prediction
 
 
 PredictorFactory = Callable[[], Predictor]
+
+
+def np_is_finite(values: object) -> bool:
+    import numpy as np
+
+    return bool(np.isfinite(np.asarray(values, dtype=np.float64)).all())
 
 
 class DetectorService:
@@ -41,6 +48,16 @@ class DetectorService:
             "fusion_artifact": Path(os.environ.get("FUSION_ARTIFACT", "artifacts/fusion.json")).is_file(),
             "transformers_installed": importlib.util.find_spec("transformers") is not None,
         }
+        fusion_path = Path(os.environ.get("FUSION_ARTIFACT", "artifacts/fusion.json"))
+        try:
+            fusion = LogisticFusion.load(fusion_path)
+            checks["fusion_artifact_valid"] = (
+                len(fusion.weights) == 2
+                and np_is_finite(fusion.weights)
+                and np_is_finite([fusion.bias, fusion.threshold])
+            )
+        except (OSError, ValueError, TypeError, KeyError):
+            checks["fusion_artifact_valid"] = False
         warnings = [name.replace("_", " ") + " is unavailable" for name, passed in checks.items() if not passed]
         if self._load_error:
             warnings.append("model initialization failed: " + self._load_error)

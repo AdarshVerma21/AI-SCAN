@@ -14,6 +14,8 @@ class LogisticFusion:
     threshold: float = 0.5
     feature_means: np.ndarray | None = None
     feature_scales: np.ndarray | None = None
+    artifact_version: str = "fusion-v1"
+    metadata: dict[str, object] | None = None
 
     def transform(self, features: np.ndarray) -> np.ndarray:
         values = np.asarray(features, dtype=np.float64)
@@ -34,9 +36,12 @@ class LogisticFusion:
 
     def save(self, path: str | Path) -> None:
         payload = {
+            "schema_version": 1,
+            "artifact_version": self.artifact_version,
             "weights": self.weights.tolist(), "bias": self.bias, "threshold": self.threshold,
             "feature_means": None if self.feature_means is None else self.feature_means.tolist(),
             "feature_scales": None if self.feature_scales is None else self.feature_scales.tolist(),
+            "metadata": self.metadata,
         }
         Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -48,5 +53,6 @@ class LogisticFusion:
         return cls(np.asarray(payload["weights"], dtype=np.float64), float(payload["bias"]),
                    float(payload["threshold"]),
                    None if means is None else np.asarray(means, dtype=np.float64),
-                   None if scales is None else np.asarray(scales, dtype=np.float64))
-
+                   None if scales is None else np.asarray(scales, dtype=np.float64),
+                   str(payload.get("artifact_version", "fusion-v1")),
+                   payload.get("metadata"))

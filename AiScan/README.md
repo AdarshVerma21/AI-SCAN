@@ -48,6 +48,27 @@ backbone path, so `PROBE_DINOV2_BACKBONE` must be set to the exact compatible
 local DINOv2 backbone or an approved Hugging Face identifier. The checkpoint
 and backbone must be compatible with the released state dictionary.
 
+## Training a standalone deepfake classifier
+
+The existing SAFE/PROBE fusion remains separate. To train a binary classifier
+from a FaceForensics subset manifest, use `filepath`, `label_id` (`0 = real`,
+`1 = fake`), and `source_video_ids` (`|`-separated IDs). The script validates
+all files and labels, builds connected source-video groups, and stops if a
+group leaks across splits. `original_path` is never read as a feature.
+
+```powershell
+python -m aiscan.training.train_classifier `
+  --manifest "C:\Users\ADARSH\Downloads\faceforensics_subset\faceforensics_subset\dataset.csv" `
+  --output "artifacts\deepfake_classifier" `
+  --epochs 10 --patience 3 --seed 42 --cpu
+```
+
+The command downloads timm's pretrained Xception41 ImageNet weights if
+they are not cached. It saves `best_model.pt`, `preprocessing.json`,
+`training_log.json`, `splits.json`, and `evaluation.json` in the new output
+directory. Validation loss controls early stopping; the test split is used
+only once for final metrics.
+
 If any required path or backbone is missing, predictions fail explicitly with a checkpoint
 configuration error. This is intentional: no mock or generic model is used.
 
@@ -107,20 +128,69 @@ scores or classifications.
 
 ## Fusion training and evaluation
 
-The manifest format is CSV with `path,label,split,generator` columns, where
-`label` is `0` for real and `1` for AI-generated. Keep generator identities
-grouped across splits to prevent leakage.
+The fusion pipeline uses only real outputs from the frozen official SAFE and
+PROBE-DINOv2 checkpoints. It requires `SAFE_REPO`, `SAFE_CHECKPOINT`,
+`PROBE_REPO`, `PROBE_CHECKPOINT`, and `PROBE_DINOV2_BACKBONE`. The repository
+checkout and checkpoints are not committed.
+
+The manifest is CSV with required columns `path,label,split,generator`.
+Relative paths are resolved relative to the manifest. Labels are `0` for
+**real** and `1` for **AI-generated**. `split` must be `train`, `validation`,
+or `test`. `generator` identifies the camera/source or image generator and is
+required for leakage analysis. Images must exist and be decodable; invalid
+labels, duplicate paths, and missing splits fail validation. Keep a generator
+or source in one split only when creating the manifest.
+
+Extract and cache detector logits:
 
 ```powershell
-python -m aiscan.fusion.train --manifest data\manifest.csv --output artifacts\fusion.json
-python -m aiscan.evaluation.evaluate --manifest data\manifest.csv --fusion artifacts\fusion.json --output artifacts\report.json
+python -m aiscan.fusion.extract `
+  --manifest data\manifest.csv `
+  --output artifacts\scores.csv
 ```
 
-Fusion training caches detector logits, uses weighted binary cross-entropy and
-L2 regularization, and selects a validation threshold by balanced accuracy.
-The final test split is never used for fitting, calibration, or threshold
-selection. `artifacts/` contains only generated reports and must not contain
-checkpoints or datasets.
+The cache has one row per manifest image, including `status` and `error`;
+failures are retained rather than skipped. `scores.metadata.json` records the
+manifest hash, checkpoint hashes, backbone, feature names, and score
+semantics. SAFE's feature is its class-1-minus-class-0 logit margin.
+PROBE-DINOv2's feature is its scalar AI-vs-real logit averaged over official
+336-pixel sliding patches. Unchanged metadata reuses the cache; use `--force`
+to regenerate it.
+
+Train the logistic fusion classifier:
+
+```powershell
+python -m aiscan.fusion.train `
+  --manifest data\manifest.csv `
+  --scores artifacts\scores.csv `
+  --output artifacts\fusion.json `
+  --seed 42
+```
+
+Only `train` rows fit the `StandardScaler` and scikit-learn
+`LogisticRegression`. `validation` rows select the balanced-accuracy
+threshold. `test` rows are never used during training or threshold selection.
+The versioned JSON artifact contains the classifier, train-fitted scaling
+parameters, threshold, seed, feature definitions, and leakage diagnostics.
+Training fails if detector errors remain in train or validation rows.
+
+Evaluate the held-out test split:
+
+```powershell
+python -m aiscan.evaluation.evaluate `
+  --manifest data\manifest.csv `
+  --scores artifacts\scores.csv `
+  --fusion artifacts\fusion.json `
+  --output artifacts\report.json
+```
+
+The report includes accuracy, precision, recall, F1, ROC-AUC, confusion
+matrix, false-positive rate, individual SAFE and PROBE-DINOv2 metrics, fused
+metrics, per-generator metrics, per-file-extension metrics, class counts,
+duplicate-content checks, and generator/source split leakage. Compression or
+degradation metrics are explicitly reported unavailable unless such columns
+are added to the manifest and evaluated. No accuracy claim is made until this
+command produces a real held-out report.
 
 ## Architecture
 
